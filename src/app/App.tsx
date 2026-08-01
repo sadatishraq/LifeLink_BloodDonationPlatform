@@ -5,7 +5,7 @@ import {
   Activity, RefreshCw, MessageCircle, X, Send, Loader2,
   Lock, Eye, EyeOff, LogIn, UserPlus, Shield,
   LayoutDashboard, Users, ClipboardList, Trash2, Ban, CircleCheck, ChevronDown, ChevronUp,
-  XCircle, AlertTriangle, Star, Award, Sparkles
+  XCircle, AlertTriangle, Star, Award, Sparkles, Navigation
 } from "lucide-react";
 
 // ── Config ────────────────────────────────────────────────────────────────
@@ -28,6 +28,38 @@ async function api(path: string, options?: RequestInit) {
     throw new Error(msg);
   }
   return res.json();
+}
+
+// ── Location helpers ──────────────────────────────────────────────────────
+function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+const geocodeCache = new Map<string, { lat: number; lon: number }>();
+async function geocodeCity(city: string): Promise<{ lat: number; lon: number } | null> {
+  const key = city.toLowerCase().trim();
+  if (geocodeCache.has(key)) return geocodeCache.get(key)!;
+  try {
+    const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(city)}&format=json&limit=1`, {
+      headers: { "User-Agent": "LifeLink-App/1.0" },
+    });
+    const data = await res.json();
+    if (data[0]) {
+      const coords = { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) };
+      geocodeCache.set(key, coords);
+      return coords;
+    }
+  } catch { /* silent */ }
+  return null;
+}
+
+function mapsDirectionsUrl(hospital: string, city: string) {
+  const dest = encodeURIComponent(`${hospital}, ${city}`);
+  return `https://www.google.com/maps/dir/?api=1&destination=${dest}`;
 }
 
 // ── Blood compatibility ───────────────────────────────────────────────────
@@ -228,11 +260,11 @@ function TextInput({ type = "text", placeholder, value, onChange, icon, right }:
 }) {
   return (
     <div className="relative">
-      {icon && <div className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">{icon}</div>}
+      {icon && <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground">{icon}</div>}
       <input type={type} placeholder={placeholder} value={value}
         onChange={e => onChange(e.target.value)}
-        className={`w-full ${icon ? "pl-10" : "px-3.5"} ${right ? "pr-10" : "pr-3.5"} py-2.5 bg-input-background border border-border rounded-md text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring/40 focus:border-primary transition-all text-sm`} />
-      {right && <div className="absolute right-3 top-1/2 -translate-y-1/2">{right}</div>}
+        className={`w-full ${icon ? "pl-10" : "px-4"} ${right ? "pr-11" : "pr-4"} py-3 bg-white border border-border rounded-xl text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/60 transition-all text-sm shadow-sm`} />
+      {right && <div className="absolute right-3.5 top-1/2 -translate-y-1/2">{right}</div>}
     </div>
   );
 }
@@ -242,7 +274,7 @@ function Select({ value, onChange, options, placeholder }: {
 }) {
   return (
     <select value={value} onChange={e => onChange(e.target.value)}
-      className="w-full px-3.5 py-2.5 bg-input-background border border-border rounded-md text-foreground focus:outline-none focus:ring-2 focus:ring-ring/40 focus:border-primary transition-all text-sm appearance-none cursor-pointer">
+      className="w-full px-4 py-3 bg-white border border-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/60 transition-all text-sm appearance-none cursor-pointer shadow-sm">
       {placeholder && <option value="" disabled>{placeholder}</option>}
       {options.map(o => <option key={o} value={o}>{o}</option>)}
     </select>
@@ -254,7 +286,7 @@ function BloodGroupSelector({ value, onChange }: { value: BloodGroup | ""; onCha
     <div className="grid grid-cols-4 gap-2">
       {BLOOD_GROUPS.map(bg => (
         <button key={bg} type="button" onClick={() => onChange(bg)}
-          className={`py-2.5 rounded-md text-sm font-bold border-2 transition-all ${value === bg ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-foreground hover:border-primary/40"}`}>
+          className={`py-2.5 rounded-xl text-sm font-bold border-2 transition-all shadow-sm ${value === bg ? "bg-primary text-primary-foreground border-primary shadow-primary/20 shadow-md" : "bg-white border-border text-foreground hover:border-primary/50 hover:bg-accent"}`}>
           {bg}
         </button>
       ))}
@@ -280,8 +312,8 @@ function StarDisplay({ avg, count, size = "sm" }: { avg: number; count: number; 
 
 function ErrorBox({ message }: { message: string }) {
   return (
-    <div className="bg-red-50 border border-red-200 rounded-md p-3 flex gap-2 text-sm text-red-700">
-      <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />{message}
+    <div className="bg-red-50 border border-red-200 rounded-xl p-3.5 flex gap-2.5 text-sm text-red-700">
+      <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" /><span>{message}</span>
     </div>
   );
 }
@@ -292,57 +324,235 @@ function PrimaryBtn({ children, onClick, loading, disabled, className }: {
 }) {
   return (
     <button onClick={onClick} disabled={loading || disabled}
-      className={`w-full bg-primary text-primary-foreground py-3 rounded-md font-semibold flex items-center justify-center gap-2 hover:bg-primary/90 transition-colors disabled:opacity-60 ${className ?? ""}`}>
+      className={`w-full bg-primary text-primary-foreground py-3.5 rounded-xl font-semibold flex items-center justify-center gap-2 hover:bg-primary/90 active:scale-[0.98] transition-all shadow-md shadow-primary/25 disabled:opacity-60 disabled:shadow-none ${className ?? ""}`}>
       {loading ? <Spinner /> : children}
     </button>
   );
 }
 
-// ── Landing ───────────────────────────────────────────────────────────────
-function LandingScreen({ onLogin, onRegister, onAdmin }: { onLogin: () => void; onRegister: () => void; onAdmin: () => void }) {
+// ── Forgot Password Modal ─────────────────────────────────────────────────
+function ForgotPasswordModal({ onClose }: { onClose: () => void }) {
+  const [step, setStep] = useState<"email" | "code" | "password">("email");
+  const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [confirmPw, setConfirmPw] = useState("");
+  const [showPw, setShowPw] = useState(false);
+  const [showConfirmPw, setShowConfirmPw] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [done, setDone] = useState(false);
+
+  const sendCode = async () => {
+    if (!email.trim()) { setError("Please enter your email address."); return; }
+    setLoading(true); setError("");
+    try {
+      await api("/auth/forgot-password", { method: "POST", body: JSON.stringify({ email: email.trim() }) });
+      setStep("code");
+    } catch (e: any) { setError(e.message ?? "Failed to send code. Please try again."); }
+    finally { setLoading(false); }
+  };
+
+  const verifyCode = async () => {
+    if (!code.trim()) { setError("Please enter the 6-digit recovery code."); return; }
+    if (code.trim().length !== 6) { setError("The recovery code must be exactly 6 digits."); return; }
+    setLoading(true); setError("");
+    try {
+      await api("/auth/verify-recovery-code", { method: "POST", body: JSON.stringify({ email: email.trim(), code: code.trim() }) });
+      setStep("password");
+    } catch (e: any) { setError(e.message ?? "Invalid code. Please try again."); }
+    finally { setLoading(false); }
+  };
+
+  const resetPassword = async () => {
+    if (!newPw) { setError("Please enter a new password."); return; }
+    if (newPw.length < 6) { setError("Password must be at least 6 characters."); return; }
+    if (newPw !== confirmPw) { setError("Passwords do not match."); return; }
+    setLoading(true); setError("");
+    try {
+      await api("/auth/reset-password", { method: "POST", body: JSON.stringify({ email: email.trim(), code: code.trim(), newPassword: newPw }) });
+      setDone(true);
+    } catch (e: any) {
+      setError(e.message ?? "Reset failed. Please check your code and try again.");
+      if (e.message?.toLowerCase().includes("code") || e.message?.toLowerCase().includes("expired")) {
+        setStep("code");
+      }
+    }
+    finally { setLoading(false); }
+  };
+
+  const stepLabels = ["Email", "Verify Code", "New Password"];
+  const stepIndex = step === "email" ? 0 : step === "code" ? 1 : 2;
+
   return (
-    <div className="min-h-screen bg-background flex flex-col">
-      <header className="px-6 py-5 border-b border-border flex items-center gap-3">
-        <BloodDropIcon className="w-7 h-7 text-primary" />
-        <span className="font-display text-xl font-bold text-foreground tracking-tight">LifeLink</span>
-      </header>
-
-      <div className="flex-1 flex flex-col items-center justify-center px-6 py-16">
-        <div className="max-w-lg w-full text-center">
-          <div className="inline-flex items-center gap-2 bg-accent text-accent-foreground text-sm font-medium px-4 py-1.5 rounded-full mb-8 border border-primary/20">
-            <span className="w-2 h-2 rounded-full bg-primary animate-pulse" />
-            Blood Needed Now — Join the Network
-          </div>
-
-          <h1 className="font-display text-5xl md:text-6xl font-extrabold text-foreground leading-tight mb-6 tracking-tight">
-            Every drop<br /><span className="text-primary">saves a life.</span>
-          </h1>
-          <p className="text-muted-foreground text-lg leading-relaxed mb-10 max-w-sm mx-auto">
-            Connect blood donors with those in need — fast, secure, and life-saving.
-          </p>
-
-          <div className="flex flex-col sm:flex-row gap-3 max-w-sm mx-auto">
-            <button onClick={onLogin}
-              className="flex-1 flex items-center justify-center gap-2 bg-primary text-primary-foreground py-3.5 rounded-md font-semibold hover:bg-primary/90 transition-colors">
-              <LogIn className="w-4 h-4" /> Log In
-            </button>
-            <button onClick={onRegister}
-              className="flex-1 flex items-center justify-center gap-2 bg-card text-foreground border-2 border-border py-3.5 rounded-md font-semibold hover:border-primary/40 transition-colors">
-              <UserPlus className="w-4 h-4" /> Create Account
-            </button>
-          </div>
-          <button onClick={onAdmin}
-            className="mt-4 flex items-center justify-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors mx-auto">
-            <Shield className="w-3 h-3" /> Admin Panel
-          </button>
+    <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 p-4">
+      <div className="bg-card rounded-xl w-full max-w-md shadow-2xl border border-border">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+          <h2 className="font-display font-bold text-foreground">Reset Password</h2>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
         </div>
 
-        <div className="mt-16 grid grid-cols-3 gap-8 max-w-xs w-full text-center">
-          {[{ val: "18K+", label: "Donors" }, { val: "4.2K", label: "Lives Saved" }, { val: "142", label: "Cities" }].map(s => (
-            <div key={s.label}>
-              <div className="text-2xl font-bold text-foreground font-display">{s.val}</div>
-              <div className="text-xs text-muted-foreground mt-0.5">{s.label}</div>
+        {!done && (
+          <div className="px-5 pt-4 flex items-center gap-2">
+            {stepLabels.map((label, i) => (
+              <div key={label} className="flex items-center gap-2 flex-1">
+                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 transition-colors ${i < stepIndex ? "bg-green-500 text-white" : i === stepIndex ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
+                  {i < stepIndex ? <CheckCircle className="w-3.5 h-3.5" /> : i + 1}
+                </div>
+                <span className={`text-xs font-medium ${i === stepIndex ? "text-foreground" : "text-muted-foreground"}`}>{label}</span>
+                {i < stepLabels.length - 1 && <div className={`flex-1 h-px ${i < stepIndex ? "bg-green-500" : "bg-border"}`} />}
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="p-5 space-y-4">
+          {done ? (
+            <div className="text-center py-4 space-y-3">
+              <CheckCircle className="w-12 h-12 text-green-500 mx-auto" />
+              <p className="font-semibold text-foreground">Password reset successfully!</p>
+              <p className="text-sm text-muted-foreground">You can now log in with your new password.</p>
+              <button onClick={onClose} className="w-full bg-primary text-primary-foreground py-2.5 rounded-lg font-semibold text-sm hover:bg-primary/90 transition-colors">Back to Login</button>
             </div>
+          ) : step === "email" ? (
+            <>
+              <p className="text-sm text-muted-foreground">Enter your registered email address. We&apos;ll check if an account exists and send a 6-digit recovery code.</p>
+              <FormField label="Email Address" required>
+                <TextInput type="email" placeholder="you@example.com" value={email} onChange={setEmail} icon={<Mail className="w-4 h-4" />} />
+              </FormField>
+              {error && <ErrorBox message={error} />}
+              <PrimaryBtn loading={loading} onClick={sendCode}><Send className="w-4 h-4" /> Send Recovery Code</PrimaryBtn>
+            </>
+          ) : step === "code" ? (
+            <>
+              <div className="bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 rounded-lg p-3 text-xs text-green-800 dark:text-green-300 flex gap-2">
+                <CheckCircle className="w-4 h-4 shrink-0 mt-0.5 text-green-600" />
+                <span>A 6-digit code was sent to <strong>{email}</strong>. Check your inbox and spam folder.</span>
+              </div>
+              <FormField label="6-Digit Recovery Code" required>
+                <TextInput placeholder="e.g. 482910" value={code} onChange={v => setCode(v.replace(/\D/g, "").slice(0, 6))} icon={<Lock className="w-4 h-4" />} />
+              </FormField>
+              {error && <ErrorBox message={error} />}
+              <PrimaryBtn loading={loading} onClick={verifyCode}><ChevronRight className="w-4 h-4" /> Continue</PrimaryBtn>
+              <button onClick={() => { setStep("email"); setCode(""); setError(""); }} className="w-full text-center text-xs text-muted-foreground hover:text-foreground transition-colors">← Use a different email</button>
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-muted-foreground">Choose a strong new password for your account.</p>
+              <FormField label="New Password" required>
+                <TextInput type={showPw ? "text" : "password"} placeholder="At least 6 characters" value={newPw} onChange={setNewPw}
+                  icon={<Lock className="w-4 h-4" />}
+                  right={<button type="button" onClick={() => setShowPw(p => !p)} className="text-muted-foreground hover:text-foreground">{showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}</button>} />
+              </FormField>
+              <FormField label="Confirm New Password" required>
+                <TextInput type={showConfirmPw ? "text" : "password"} placeholder="Re-enter your new password" value={confirmPw} onChange={setConfirmPw}
+                  icon={<Lock className="w-4 h-4" />}
+                  right={<button type="button" onClick={() => setShowConfirmPw(p => !p)} className="text-muted-foreground hover:text-foreground">{showConfirmPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}</button>} />
+              </FormField>
+              {confirmPw && newPw !== confirmPw && (
+                <p className="text-xs text-red-500 flex items-center gap-1"><XCircle className="w-3.5 h-3.5" /> Passwords do not match</p>
+              )}
+              {confirmPw && newPw === confirmPw && newPw.length >= 6 && (
+                <p className="text-xs text-green-600 flex items-center gap-1"><CheckCircle className="w-3.5 h-3.5" /> Passwords match</p>
+              )}
+              {error && <ErrorBox message={error} />}
+              <PrimaryBtn loading={loading} onClick={resetPassword}><CheckCircle className="w-4 h-4" /> Set New Password</PrimaryBtn>
+              <button onClick={() => { setStep("code"); setError(""); }} className="w-full text-center text-xs text-muted-foreground hover:text-foreground transition-colors">← Re-enter recovery code</button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Landing ───────────────────────────────────────────────────────────────
+function LandingScreen({ onLogin, onRegister, onAdmin }: { onLogin: () => void; onRegister: () => void; onAdmin: () => void }) {
+  const [stats, setStats] = useState<{ totalUsers: number; fulfilledRequests: number; cities: number } | null>(null);
+
+  useEffect(() => {
+    fetch(`${API}/stats/public`, { headers: { Authorization: `Bearer ${ANON_KEY}` } })
+      .then(r => r.ok ? r.json() : null)
+      .then(s => { if (s) setStats(s); })
+      .catch(() => {});
+  }, []);
+
+  const statItems = [
+    { val: stats ? stats.totalUsers.toLocaleString() : "—", label: "Members" },
+    { val: stats ? stats.fulfilledRequests.toLocaleString() : "—", label: "Lives Saved" },
+    { val: stats ? stats.cities.toLocaleString() : "—", label: "Cities" },
+  ];
+
+  return (
+    <div className="min-h-screen bg-background flex flex-col">
+      {/* Header */}
+      <header className="px-6 py-4 flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center shadow-md shadow-primary/30">
+            <BloodDropIcon className="w-4.5 h-4.5 text-white" />
+          </div>
+          <span className="font-display text-lg font-bold text-foreground tracking-tight">LifeLink</span>
+        </div>
+        <button onClick={onAdmin} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg hover:bg-muted">
+          <Shield className="w-3.5 h-3.5" /> Admin
+        </button>
+      </header>
+
+      {/* Hero */}
+      <div className="flex-1 flex flex-col items-center justify-center px-6 py-10">
+        <div className="max-w-md w-full text-center">
+          {/* Badge */}
+          <div className="inline-flex items-center gap-2 bg-white border border-border text-foreground text-xs font-semibold px-4 py-2 rounded-full mb-8 shadow-sm">
+            <span className="w-2 h-2 rounded-full bg-primary animate-pulse" />
+            Connecting donors across Bangladesh
+          </div>
+
+          {/* Big drop icon */}
+          <div className="relative inline-flex mb-8">
+            <div className="w-20 h-20 bg-primary rounded-2xl flex items-center justify-center shadow-2xl shadow-primary/40 rotate-3">
+              <BloodDropIcon className="w-10 h-10 text-white" />
+            </div>
+            <div className="absolute -top-1 -right-1 w-6 h-6 bg-green-500 rounded-full flex items-center justify-center shadow-md">
+              <CheckCircle className="w-3.5 h-3.5 text-white" />
+            </div>
+          </div>
+
+          <h1 className="font-display text-4xl sm:text-5xl font-black text-foreground leading-[1.1] mb-4 tracking-tight">
+            Every drop<br /><span className="text-primary">saves a life.</span>
+          </h1>
+          <p className="text-muted-foreground text-base leading-relaxed mb-10 max-w-xs mx-auto">
+            Connect with verified blood donors across Bangladesh — fast, safe, life-saving.
+          </p>
+
+          {/* CTA buttons */}
+          <div className="flex flex-col gap-3 max-w-xs mx-auto">
+            <button onClick={onLogin}
+              className="flex items-center justify-center gap-2.5 bg-primary text-white py-4 rounded-2xl font-bold text-sm hover:bg-primary/90 active:scale-[0.98] transition-all shadow-lg shadow-primary/30">
+              <LogIn className="w-4 h-4" /> Log In to Your Account
+            </button>
+            <button onClick={onRegister}
+              className="flex items-center justify-center gap-2.5 bg-white text-foreground border-2 border-border py-4 rounded-2xl font-bold text-sm hover:border-primary/40 hover:bg-accent active:scale-[0.98] transition-all shadow-sm">
+              <UserPlus className="w-4 h-4" /> Create Free Account
+            </button>
+          </div>
+        </div>
+
+        {/* Stats */}
+        <div className="mt-14 w-full max-w-xs">
+          <div className="bg-white rounded-2xl border border-border shadow-sm p-5 grid grid-cols-3 divide-x divide-border">
+            {statItems.map(s => (
+              <div key={s.label} className="text-center px-3">
+                <div className="text-xl font-black text-foreground font-display">{s.val}</div>
+                <div className="text-[11px] text-muted-foreground mt-0.5 font-medium">{s.label}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Feature pills */}
+        <div className="mt-6 flex flex-wrap justify-center gap-2 max-w-xs">
+          {["Free to use", "Real-time matching", "Verified donors", "Google Maps directions"].map(f => (
+            <span key={f} className="text-[11px] text-muted-foreground bg-white border border-border px-3 py-1 rounded-full font-medium">{f}</span>
           ))}
         </div>
       </div>
@@ -359,6 +569,7 @@ function LoginScreen({ onBack, onSuccess, onGoRegister }: {
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [showForgot, setShowForgot] = useState(false);
 
   const handleLogin = async () => {
     if (!email || !password) { setError("Please enter your email and password."); return; }
@@ -386,26 +597,30 @@ function LoginScreen({ onBack, onSuccess, onGoRegister }: {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      <header className="px-6 py-5 border-b border-border flex items-center justify-between">
-        <button onClick={onBack} className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors text-sm font-medium">
+      <header className="px-6 py-4 flex items-center justify-between">
+        <button onClick={onBack} className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors text-sm font-semibold">
           <ArrowLeft className="w-4 h-4" /> Back
         </button>
         <div className="flex items-center gap-2">
-          <BloodDropIcon className="w-5 h-5 text-primary" />
+          <div className="w-7 h-7 bg-primary rounded-lg flex items-center justify-center shadow-md shadow-primary/30">
+            <BloodDropIcon className="w-4 h-4 text-white" />
+          </div>
           <span className="font-display font-bold text-foreground">LifeLink</span>
         </div>
-        <div className="w-12" />
+        <div className="w-16" />
       </header>
 
-      <div className="flex-1 flex items-center justify-center px-6 py-12">
+      <div className="flex-1 flex items-center justify-center px-6 py-10">
         <div className="w-full max-w-sm">
-          <div className="w-12 h-12 rounded-xl bg-accent border border-primary/20 flex items-center justify-center mb-6">
-            <LogIn className="w-5 h-5 text-primary" />
+          <div className="mb-8">
+            <div className="w-14 h-14 rounded-2xl bg-accent border border-primary/15 flex items-center justify-center mb-5 shadow-sm">
+              <LogIn className="w-6 h-6 text-primary" />
+            </div>
+            <h1 className="font-display text-3xl font-black text-foreground mb-1.5">Welcome back</h1>
+            <p className="text-muted-foreground text-sm">Log in to continue saving lives.</p>
           </div>
-          <h1 className="font-display text-3xl font-extrabold text-foreground mb-1">Welcome back</h1>
-          <p className="text-muted-foreground text-sm mb-8">Log in to see your dashboard and status.</p>
 
-          {error && <div className="mb-2"><ErrorBox message={error} /></div>}
+          {error && <div className="mb-4"><ErrorBox message={error} /></div>}
 
           <div className="flex flex-col gap-4">
             <FormField label="Email Address" required>
@@ -425,6 +640,12 @@ function LoginScreen({ onBack, onSuccess, onGoRegister }: {
                 } />
             </FormField>
 
+            <div className="flex justify-end">
+              <button onClick={() => setShowForgot(true)} className="text-xs text-primary hover:underline transition-colors font-semibold">
+                Forgot password?
+              </button>
+            </div>
+
             <PrimaryBtn loading={loading} onClick={handleLogin}>
               <LogIn className="w-4 h-4" /> Log In
             </PrimaryBtn>
@@ -432,10 +653,11 @@ function LoginScreen({ onBack, onSuccess, onGoRegister }: {
 
           <p className="text-center text-sm text-muted-foreground mt-6">
             {"Don't have an account? "}
-            <button onClick={onGoRegister} className="text-primary font-semibold hover:underline">Create one</button>
+            <button onClick={onGoRegister} className="text-primary font-bold hover:underline">Create one</button>
           </p>
         </div>
       </div>
+      {showForgot && <ForgotPasswordModal onClose={() => setShowForgot(false)} />}
     </div>
   );
 }
@@ -450,6 +672,11 @@ function RegisterScreen({ onBack, onComplete, onGoLogin }: {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const isDonor = role === "donor";
+  // Email verification state (inserted between step 2 and 3)
+  const [emailVerified, setEmailVerified] = useState(false);
+  const [verifyCode, setVerifyCode] = useState("");
+  const [verifySending, setVerifySending] = useState(false);
+  const [verifyCodeSent, setVerifyCodeSent] = useState(false);
 
   const [form, setForm] = useState({
     firstName: "", lastName: "", dob: "", gender: "" as Gender | "",
@@ -465,7 +692,16 @@ function RegisterScreen({ onBack, onComplete, onGoLogin }: {
   const set = (key: keyof typeof form) => (val: string | boolean) =>
     setForm(f => ({ ...f, [key]: val }));
 
-  const totalSteps = 4; // role → personal → contact+auth → role-specific
+  // Steps: 1=Personal, 2=Credentials, 2.5=Email verify, 3=Contact, 4=Role-specific
+  // We model this as steps 1-4 but inject a "verify" sub-step after step 2
+  const totalSteps = 5; // personal → credentials → verify email → contact → role-specific
+  const stepTitlesMap = [
+    "Personal Information",
+    "Login Credentials",
+    "Verify Your Email",
+    "Contact & Location",
+    isDonor ? "Donor Details" : "Request Details",
+  ];
 
   const handleSubmit = async () => {
     if (form.password !== form.confirmPassword) {
@@ -571,17 +807,10 @@ function RegisterScreen({ onBack, onComplete, onGoLogin }: {
     );
   }
 
-  const stepTitles = [
-    "Personal Information",
-    "Login Credentials",
-    "Contact & Location",
-    isDonor ? "Donor Details" : "Request Details",
-  ];
-
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <header className="px-6 py-5 border-b border-border flex items-center justify-between">
-        <button onClick={step === 1 ? () => setRoleChosen(false) : () => setStep(s => s - 1)}
+        <button onClick={step === 1 ? () => setRoleChosen(false) : () => { setStep(s => s - 1); setError(""); }}
           className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors text-sm font-medium">
           <ArrowLeft className="w-4 h-4" />{step === 1 ? "Back" : "Previous"}
         </button>
@@ -601,7 +830,7 @@ function RegisterScreen({ onBack, onComplete, onGoLogin }: {
           {isDonor ? <Heart className="w-3 h-3" /> : <Activity className="w-3 h-3" />}
           {isDonor ? "Donor Registration" : "Blood Request Registration"}
         </div>
-        <h1 className="font-display text-2xl font-bold text-foreground mb-1">{stepTitles[step - 1]}</h1>
+        <h1 className="font-display text-2xl font-bold text-foreground mb-1">{stepTitlesMap[step - 1]}</h1>
         <p className="text-muted-foreground text-sm mb-8">Step {step} of {totalSteps}</p>
 
         {/* Step 1 — Personal */}
@@ -609,10 +838,10 @@ function RegisterScreen({ onBack, onComplete, onGoLogin }: {
           <div className="flex flex-col gap-5">
             <div className="grid grid-cols-2 gap-4">
               <FormField label="First Name" required>
-                <TextInput placeholder="Arjun" value={form.firstName} onChange={set("firstName")} />
+                <TextInput placeholder="Rahim" value={form.firstName} onChange={set("firstName")} />
               </FormField>
               <FormField label="Last Name" required>
-                <TextInput placeholder="Mehta" value={form.lastName} onChange={set("lastName")} />
+                <TextInput placeholder="Hossain" value={form.lastName} onChange={set("lastName")} />
               </FormField>
             </div>
             <FormField label="Date of Birth" required hint={isDonor ? "Must be 18–65 years to donate." : undefined}>
@@ -665,17 +894,77 @@ function RegisterScreen({ onBack, onComplete, onGoLogin }: {
           </div>
         )}
 
-        {/* Step 3 — Contact */}
+        {/* Step 3 — Email Verification */}
         {step === 3 && (
           <div className="flex flex-col gap-5">
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex gap-3">
+              <Mail className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-semibold text-blue-900">Verify your email address</p>
+                <p className="text-xs text-blue-700 mt-1 leading-relaxed">
+                  We sent a 6-digit code to <strong>{form.email}</strong>. Enter it below to confirm your email is real.
+                </p>
+              </div>
+            </div>
+            {!verifyCodeSent ? (
+              <button onClick={async () => {
+                setVerifySending(true); setError("");
+                try {
+                  await api("/auth/send-verification", { method: "POST", body: JSON.stringify({ email: form.email }) });
+                  setVerifyCodeSent(true);
+                } catch (e: any) { setError(e.message ?? "Failed to send code."); }
+                finally { setVerifySending(false); }
+              }} disabled={verifySending}
+                className="w-full bg-primary text-primary-foreground py-3.5 rounded-xl font-semibold flex items-center justify-center gap-2 hover:bg-primary/90 transition-all shadow-md shadow-primary/25 disabled:opacity-60">
+                {verifySending ? <Spinner /> : <><Send className="w-4 h-4" /> Send Verification Code</>}
+              </button>
+            ) : (
+              <>
+                <FormField label="6-Digit Verification Code" required>
+                  <TextInput placeholder="e.g. 482910" value={verifyCode}
+                    onChange={v => setVerifyCode(v.replace(/\D/g, "").slice(0, 6))}
+                    icon={<Lock className="w-4 h-4" />} />
+                </FormField>
+                <button onClick={async () => {
+                  if (verifyCode.length !== 6) { setError("Please enter the full 6-digit code."); return; }
+                  setVerifySending(true); setError("");
+                  try {
+                    await api("/auth/verify-email-code", { method: "POST", body: JSON.stringify({ email: form.email, code: verifyCode }) });
+                    setEmailVerified(true);
+                    setStep(s => s + 1);
+                  } catch (e: any) { setError(e.message ?? "Invalid code."); }
+                  finally { setVerifySending(false); }
+                }} disabled={verifySending || verifyCode.length !== 6}
+                  className="w-full bg-primary text-primary-foreground py-3.5 rounded-xl font-semibold flex items-center justify-center gap-2 hover:bg-primary/90 transition-all shadow-md shadow-primary/25 disabled:opacity-60">
+                  {verifySending ? <Spinner /> : <><CheckCircle className="w-4 h-4" /> Verify &amp; Continue</>}
+                </button>
+                <button onClick={async () => {
+                  setVerifyCode(""); setVerifyCodeSent(false); setError("");
+                  setVerifySending(true);
+                  try {
+                    await api("/auth/send-verification", { method: "POST", body: JSON.stringify({ email: form.email }) });
+                    setVerifyCodeSent(true);
+                  } catch (e: any) { setError(e.message ?? "Failed to resend."); }
+                  finally { setVerifySending(false); }
+                }} className="text-center text-xs text-muted-foreground hover:text-foreground transition-colors w-full">
+                  Didn&apos;t receive it? Resend code
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Step 4 — Contact */}
+        {step === 4 && (
+          <div className="flex flex-col gap-5">
             <FormField label="Phone Number" required>
-              <TextInput type="tel" placeholder="+91 98765 43210" value={form.phone} onChange={set("phone")}
+              <TextInput type="tel" placeholder="01712 345678" value={form.phone} onChange={set("phone")}
                 icon={<Phone className="w-4 h-4" />} />
             </FormField>
             <FormField label="Street Address" required>
               <div className="relative">
                 <MapPin className="absolute left-3 top-3 w-4 h-4 text-muted-foreground" />
-                <textarea placeholder="12B, Shivaji Nagar..." value={form.address}
+                <textarea placeholder="House 12, Road 5, Dhanmondi..." value={form.address}
                   onChange={e => set("address")(e.target.value)} rows={2}
                   className="w-full pl-10 pr-3.5 py-2.5 bg-input-background border border-border rounded-md text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring/40 focus:border-primary transition-all text-sm resize-none" />
               </div>
@@ -685,14 +974,14 @@ function RegisterScreen({ onBack, onComplete, onGoLogin }: {
                 <TextInput placeholder="Mumbai" value={form.city} onChange={set("city")} />
               </FormField>
               <FormField label="State" required>
-                <TextInput placeholder="Maharashtra" value={form.state} onChange={set("state")} />
+                <TextInput placeholder="Dhaka Division" value={form.state} onChange={set("state")} />
               </FormField>
             </div>
           </div>
         )}
 
-        {/* Step 4 — Donor specific */}
-        {step === 4 && isDonor && (
+        {/* Step 5 — Donor specific */}
+        {step === 5 && isDonor && (
           <div className="flex flex-col gap-5">
             <FormField label="Last Donation Date" hint="Leave blank if this is your first donation.">
               <div className="relative">
@@ -726,8 +1015,8 @@ function RegisterScreen({ onBack, onComplete, onGoLogin }: {
           </div>
         )}
 
-        {/* Step 4 — Taker specific */}
-        {step === 4 && !isDonor && (
+        {/* Step 5 — Taker specific */}
+        {step === 5 && !isDonor && (
           <div className="flex flex-col gap-5">
             <FormField label="Urgency Level" required>
               <div className="grid grid-cols-2 gap-2">
@@ -740,7 +1029,7 @@ function RegisterScreen({ onBack, onComplete, onGoLogin }: {
               </div>
             </FormField>
             <FormField label="Hospital / Location" required>
-              <TextInput placeholder="Apollo Hospital, Andheri West" value={form.hospital} onChange={set("hospital")} />
+              <TextInput placeholder="Dhaka Medical College Hospital" value={form.hospital} onChange={set("hospital")} />
             </FormField>
             <FormField label="Units Required" required hint="1 unit ≈ 450 ml of whole blood.">
               <div className="flex gap-2">
@@ -769,18 +1058,26 @@ function RegisterScreen({ onBack, onComplete, onGoLogin }: {
         {error && <div className="mt-4"><ErrorBox message={error} /></div>}
 
         <div className="mt-10">
-          {step < totalSteps ? (
+          {step === 3 ? null /* step 3 has its own inline buttons */ : step < totalSteps ? (
             <PrimaryBtn loading={saving} onClick={async () => {
               setError("");
+              if (step === 1) {
+                if (!form.firstName || !form.lastName || !form.dob || !form.gender || !form.bloodGroup) {
+                  setError("Please fill in all personal details."); return;
+                }
+              }
               if (step === 2) {
                 if (!form.email || !form.password) { setError("Email and password are required."); return; }
+                if (form.password !== form.confirmPassword) { setError("Passwords do not match."); return; }
                 if (form.password.length < 6) { setError("Password must be at least 6 characters."); return; }
                 setSaving(true);
                 try {
                   const { taken } = await api(`/auth/check-email?email=${encodeURIComponent(form.email)}`);
                   if (taken) { setError("An account with this email already exists. Please log in instead."); return; }
-                } catch { /* silent — let server catch it at submit */ }
+                } catch { /* silent — let server catch it */ }
                 finally { setSaving(false); }
+                // Reset verification state when moving to verify step
+                setVerifyCodeSent(false); setVerifyCode(""); setEmailVerified(false);
               }
               setStep(s => s + 1);
             }}>
@@ -943,7 +1240,61 @@ function NewRequestModal({ profile, onClose, onSuccess }: {
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [locating, setLocating] = useState(false);
+  const [locError, setLocError] = useState("");
+  const [hospitalSuggestions, setHospitalSuggestions] = useState<string[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [searchingHospital, setSearchingHospital] = useState(false);
+  const hospitalSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const set = (k: keyof typeof form) => (v: any) => setForm(f => ({ ...f, [k]: v }));
+
+  const detectLocation = () => {
+    if (!navigator.geolocation) { setLocError("Geolocation not supported by your browser."); return; }
+    setLocating(true); setLocError("");
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          const res = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?lat=${pos.coords.latitude}&lon=${pos.coords.longitude}&format=json`,
+            { headers: { "User-Agent": "LifeLink-App/1.0" } }
+          );
+          const data = await res.json();
+          const city = data.address?.city || data.address?.town || data.address?.village || data.address?.county || "";
+          if (city) setForm(f => ({ ...f, city }));
+          else setLocError("Could not determine city from your location.");
+        } catch { setLocError("Failed to fetch location details."); }
+        finally { setLocating(false); }
+      },
+      () => { setLocError("Location access denied. Please allow location or type manually."); setLocating(false); },
+      { timeout: 8000 }
+    );
+  };
+
+  const searchHospital = async (query: string) => {
+    set("hospital")(query);
+    if (!query.trim() || query.length < 3) { setHospitalSuggestions([]); setShowSuggestions(false); return; }
+    if (hospitalSearchTimer.current) clearTimeout(hospitalSearchTimer.current);
+    hospitalSearchTimer.current = setTimeout(async () => {
+      setSearchingHospital(true);
+      try {
+        const searchQuery = form.city ? `${query} hospital ${form.city}` : `${query} hospital`;
+        const res = await fetch(
+          `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(searchQuery)}&format=json&limit=5&addressdetails=1`,
+          { headers: { "User-Agent": "LifeLink-App/1.0" } }
+        );
+        const data = await res.json();
+        const names = data
+          .filter((d: any) => d.display_name)
+          .map((d: any) => {
+            const parts = d.display_name.split(",");
+            return parts.slice(0, 3).join(",").trim();
+          });
+        setHospitalSuggestions([...new Set<string>(names)].slice(0, 5));
+        setShowSuggestions(true);
+      } catch { /* silent */ }
+      finally { setSearchingHospital(false); }
+    }, 400);
+  };
 
   const handleSubmit = async () => {
     if (!form.hospital || !form.city) { setError("Hospital and city are required."); return; }
@@ -1003,11 +1354,52 @@ function NewRequestModal({ profile, onClose, onSuccess }: {
           </FormField>
 
           <FormField label="Hospital / Location" required>
-            <TextInput placeholder="Apollo Hospital, Andheri West" value={form.hospital} onChange={set("hospital")} />
+            <div className="relative">
+              <div className="relative">
+                <MapPin className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <input
+                  type="text"
+                  placeholder="Search hospital name…"
+                  value={form.hospital}
+                  onChange={e => searchHospital(e.target.value)}
+                  onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+                  onFocus={() => hospitalSuggestions.length > 0 && setShowSuggestions(true)}
+                  className="w-full pl-10 pr-10 py-3 bg-white border border-border rounded-xl text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/60 transition-all text-sm shadow-sm"
+                />
+                {searchingHospital && <Loader2 className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin text-muted-foreground" />}
+              </div>
+              {showSuggestions && hospitalSuggestions.length > 0 && (
+                <div className="absolute z-10 w-full bg-white border border-border rounded-xl shadow-lg mt-1 overflow-hidden">
+                  {hospitalSuggestions.map((s, i) => (
+                    <button key={i} type="button"
+                      onMouseDown={() => { set("hospital")(s); setShowSuggestions(false); }}
+                      className="w-full text-left px-4 py-2.5 text-sm hover:bg-muted transition-colors border-b border-border last:border-0 text-foreground">
+                      <MapPin className="inline w-3 h-3 text-primary mr-2" />{s}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </FormField>
 
           <FormField label="City" required>
-            <TextInput placeholder="Mumbai" value={form.city} onChange={set("city")} />
+            <div className="flex gap-2">
+              <div className="flex-1">
+                <TextInput placeholder="Dhaka" value={form.city} onChange={set("city")} icon={<MapPin className="w-4 h-4" />} />
+              </div>
+              <button type="button" onClick={detectLocation} disabled={locating}
+                className="shrink-0 flex items-center gap-1.5 px-3 py-3 bg-primary/10 border border-primary/25 text-primary rounded-xl text-xs font-bold hover:bg-primary/20 transition-colors disabled:opacity-60">
+                {locating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Navigation className="w-4 h-4" />}
+                {locating ? "…" : "Detect"}
+              </button>
+            </div>
+            {locError && <p className="text-xs text-red-500 mt-1">{locError}</p>}
+            {!locError && form.city && (
+              <a href={mapsDirectionsUrl(form.hospital || "hospital", form.city)} target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-xs text-primary hover:underline mt-1 font-medium">
+                <MapPin className="w-3 h-3" /> Preview on Google Maps
+              </a>
+            )}
           </FormField>
 
           <FormField label="Units Required" required hint="1 unit ≈ 450 ml of whole blood.">
@@ -1618,8 +2010,9 @@ function DashboardScreen({ profile, onLogout }: { profile: Profile; onLogout: ()
   const [convLoading, setConvLoading] = useState(false);
   const [messageBadge, setMessageBadge] = useState(0);
   const [donorProfiles, setDonorProfiles] = useState<Map<string, Profile>>(new Map());
-  // requestId → rating given (for takers viewing history)
   const [historyRatings, setHistoryRatings] = useState<Map<string, DonorRating[]>>(new Map());
+  const [userCoords, setUserCoords] = useState<{ lat: number; lon: number } | null>(null);
+  const [requestDistances, setRequestDistances] = useState<Map<string, number>>(new Map());
 
   const loadAllData = useCallback(async () => {
     setLoading(true);
@@ -1674,6 +2067,34 @@ function DashboardScreen({ profile, onLogout }: { profile: Profile; onLogout: ()
   useEffect(() => {
     if ("Notification" in window && Notification.permission === "granted") setNotifEnabled(true);
   }, []);
+
+  // Acquire user geolocation once on mount
+  useEffect(() => {
+    if (!("geolocation" in navigator)) return;
+    navigator.geolocation.getCurrentPosition(
+      pos => setUserCoords({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+      () => { /* denied or unavailable — silent */ },
+      { timeout: 8000 }
+    );
+  }, []);
+
+  // Compute distances for visible requests whenever coords or requests change
+  useEffect(() => {
+    if (!userCoords || compatibleRequests.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const updates = new Map<string, number>(requestDistances);
+      for (const req of compatibleRequests) {
+        if (cancelled) break;
+        if (updates.has(req.id)) continue;
+        const coords = await geocodeCity(req.city);
+        if (coords) updates.set(req.id, haversineKm(userCoords.lat, userCoords.lon, coords.lat, coords.lon));
+        await new Promise(r => setTimeout(r, 300)); // respect Nominatim 1 req/s limit
+      }
+      if (!cancelled) setRequestDistances(new Map(updates));
+    })();
+    return () => { cancelled = true; };
+  }, [userCoords, compatibleRequests.map(r => r.id).join(",")]);
 
   // Poll every 30s for new requests and response counts
   useEffect(() => {
@@ -1816,24 +2237,25 @@ function DashboardScreen({ profile, onLogout }: { profile: Profile; onLogout: ()
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      <header className="px-5 py-3.5 border-b border-border bg-card flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <BloodDropIcon className="w-6 h-6 text-primary" />
+      <header className="px-5 py-3.5 border-b border-border bg-white/80 backdrop-blur-sm sticky top-0 z-20 flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <div className="w-7 h-7 bg-primary rounded-lg flex items-center justify-center shadow-sm shadow-primary/30">
+            <BloodDropIcon className="w-4 h-4 text-white" />
+          </div>
           <span className="font-display font-bold text-foreground tracking-tight">LifeLink</span>
         </div>
         <div className="flex items-center gap-2">
           {!notifEnabled && "Notification" in window && Notification.permission !== "denied" && (
             <button onClick={async () => { const granted = await requestNotificationPermission(); setNotifEnabled(granted); }}
-              className="text-xs bg-accent text-accent-foreground border border-primary/20 px-2.5 py-1.5 rounded-md hover:bg-primary hover:text-primary-foreground transition-colors font-medium flex items-center gap-1.5">
+              className="text-xs bg-accent text-accent-foreground border border-primary/20 px-2.5 py-1.5 rounded-lg hover:bg-primary hover:text-primary-foreground transition-colors font-semibold flex items-center gap-1.5">
               🔔 Alerts
             </button>
           )}
           {notifEnabled && (
-            <span className="text-xs text-green-600 font-medium hidden sm:flex items-center gap-1">
+            <span className="text-xs text-green-600 font-semibold hidden sm:flex items-center gap-1">
               <CheckCircle className="w-3 h-3" /> Alerts on
             </span>
           )}
-          {/* Profile avatar button */}
           <button onClick={async () => {
             setProfileOpen(true);
             try {
@@ -1841,7 +2263,7 @@ function DashboardScreen({ profile, onLogout }: { profile: Profile; onLogout: ()
               if (data.profile) setLocalProfile(data.profile);
             } catch { /* silent */ }
           }}
-            className="w-9 h-9 rounded-full bg-primary text-primary-foreground flex items-center justify-center font-display font-bold text-sm hover:opacity-90 transition-opacity ring-2 ring-primary/20">
+            className="w-9 h-9 rounded-full bg-primary text-primary-foreground flex items-center justify-center font-display font-bold text-sm hover:opacity-90 transition-opacity ring-2 ring-primary/20 shadow-md shadow-primary/20">
             {localProfile.firstName[0]}{localProfile.lastName[0]}
           </button>
         </div>
@@ -1949,32 +2371,32 @@ function DashboardScreen({ profile, onLogout }: { profile: Profile; onLogout: ()
                 val: localProfile.lastDonationDate ? `${Math.floor((Date.now() - new Date(localProfile.lastDonationDate).getTime()) / 86400000)}d ago` : "Never",
               },
             ].map(s => (
-              <div key={s.label} className={`rounded-lg p-3 text-center ${s.highlight ? "bg-primary/10 border border-primary/20" : "bg-secondary"}`}>
-                <div className={`w-6 h-6 rounded-md flex items-center justify-center mx-auto mb-1.5 ${s.highlight ? "bg-primary text-primary-foreground" : "bg-card text-primary"}`}>{s.icon}</div>
-                <div className={`font-display font-bold text-sm ${s.highlight ? "text-primary" : "text-foreground"}`}>{s.val}</div>
-                <div className="text-[10px] text-muted-foreground mt-0.5 leading-tight">{s.label}</div>
+              <div key={s.label} className={`rounded-2xl p-3.5 text-center shadow-sm ${s.highlight ? "bg-primary text-primary-foreground" : "bg-white border border-border"}`}>
+                <div className={`w-7 h-7 rounded-xl flex items-center justify-center mx-auto mb-2 ${s.highlight ? "bg-white/20" : "bg-primary/10 text-primary"}`}>{s.icon}</div>
+                <div className={`font-display font-black text-base ${s.highlight ? "text-white" : "text-foreground"}`}>{s.val}</div>
+                <div className={`text-[10px] mt-0.5 leading-tight font-medium ${s.highlight ? "text-white/80" : "text-muted-foreground"}`}>{s.label}</div>
               </div>
             ))}
           </div>
           {(localProfile.donationCount ?? 0) === 0 && (
             <p className="text-xs text-muted-foreground text-center mt-3 border-t border-border pt-3">
-              You haven&apos;t donated yet — respond to a request to make your first life-saving impact! 💪
+              You haven&apos;t donated yet — respond to a request to make your first life-saving impact!
             </p>
           )}
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b border-border mb-5 overflow-x-auto">
+        <div className="flex gap-1 mb-5 overflow-x-auto bg-muted/60 rounded-xl p-1">
           {tabs.map(t => (
             <button key={t.key} onClick={() => {
               setTab(t.key as any);
               if (t.key === "activity") setResponseBadge(0);
               if (t.key === "messages") setMessageBadge(0);
             }}
-              className={`px-3 py-2.5 text-sm font-semibold transition-colors border-b-2 -mb-px flex items-center gap-1.5 whitespace-nowrap ${tab === t.key ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
+              className={`flex-1 px-2 py-2 text-xs font-bold transition-all rounded-lg flex items-center justify-center gap-1.5 whitespace-nowrap min-w-0 ${tab === t.key ? "bg-white text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
               {t.label}
               {t.badge > 0 && (
-                <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold leading-none ${tab === t.key ? "bg-primary/20 text-primary" : "bg-primary text-primary-foreground"}`}>
+                <span className={`inline-flex items-center justify-center w-4.5 h-4.5 rounded-full text-[9px] font-black leading-none px-1 ${tab === t.key ? "bg-primary text-white" : "bg-primary/80 text-white"}`}>
                   {t.badge > 99 ? "99+" : t.badge}
                 </span>
               )}
@@ -2029,38 +2451,47 @@ function DashboardScreen({ profile, onLogout }: { profile: Profile; onLogout: ()
                   const responded = respondedIds.has(req.id);
                   const isSuccess = successId === req.id;
                   return (
-                    <div key={req.id} className={`bg-card border rounded-lg p-4 transition-all ${isSuccess ? "border-green-300 bg-green-50" : "border-border hover:border-primary/30"}`}>
+                    <div key={req.id} className={`bg-white border-2 rounded-2xl p-4 transition-all shadow-sm ${isSuccess ? "border-green-300 bg-green-50/50" : "border-border hover:border-primary/25 hover:shadow-md"}`}>
                       <div className="flex items-start justify-between gap-3 mb-3">
                         <div className="flex items-center gap-3">
-                          <div className={`w-10 h-10 rounded-md flex items-center justify-center font-display font-extrabold text-sm ${uc.card} border`}>
+                          <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-display font-black text-base border-2 shadow-sm ${uc.card}`}>
                             <span className="text-primary">{req.bloodGroup}</span>
                           </div>
                           <div>
-                            <p className="font-semibold text-foreground text-sm">{req.patientName || req.takerName}</p>
-                            <p className="text-xs text-muted-foreground">{req.hospital}</p>
+                            <p className="font-bold text-foreground text-sm">{req.patientName || req.takerName}</p>
+                            <p className="text-xs text-muted-foreground mt-0.5">{req.hospital}</p>
                           </div>
                         </div>
                         <div className="flex flex-col items-end gap-1.5 shrink-0">
-                          <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border flex items-center gap-1.5 ${uc.badge}`}>
+                          <span className={`text-xs font-bold px-2.5 py-1 rounded-full border flex items-center gap-1.5 ${uc.badge}`}>
                             <span className={`w-1.5 h-1.5 rounded-full ${uc.dot} ${req.urgency === "Critical" ? "animate-pulse" : ""}`} />
                             {req.urgency}
                           </span>
-                          <span className="text-xs text-muted-foreground">{timeAgo(req.createdAt)}</span>
+                          <span className="text-[11px] text-muted-foreground">{timeAgo(req.createdAt)}</span>
                         </div>
                       </div>
-                      <div className="flex items-center gap-4 text-xs text-muted-foreground mb-3">
-                        <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{req.city}</span>
-                        <span className="flex items-center gap-1"><Plus className="w-3 h-3" />{req.unitsRequired} unit{req.unitsRequired > 1 ? "s" : ""}</span>
-                        <span className="flex items-center gap-1"><MessageCircle className="w-3 h-3" />{req.responseCount} response{req.responseCount !== 1 ? "s" : ""}</span>
+                      <div className="flex items-center gap-3 text-xs text-muted-foreground mb-3 flex-wrap">
+                        <span className="flex items-center gap-1.5 bg-muted rounded-full px-2.5 py-1"><MapPin className="w-3 h-3" />{req.city}</span>
+                        {requestDistances.has(req.id) && (
+                          <span className="flex items-center gap-1.5 bg-primary/10 text-primary font-semibold rounded-full px-2.5 py-1">
+                            ~{requestDistances.get(req.id)!.toFixed(0)} km
+                          </span>
+                        )}
+                        <span className="flex items-center gap-1.5 bg-muted rounded-full px-2.5 py-1"><Droplets className="w-3 h-3" />{req.unitsRequired} unit{req.unitsRequired > 1 ? "s" : ""}</span>
+                        <span className="flex items-center gap-1.5 bg-muted rounded-full px-2.5 py-1"><MessageCircle className="w-3 h-3" />{req.responseCount}</span>
                       </div>
-                      {req.reason && <p className="text-xs text-muted-foreground mb-3 line-clamp-2">{req.reason}</p>}
+                      {req.reason && <p className="text-xs text-muted-foreground mb-3 line-clamp-2 leading-relaxed">{req.reason}</p>}
+                      <a href={mapsDirectionsUrl(req.hospital, req.city)} target="_blank" rel="noopener noreferrer"
+                        className="flex items-center gap-1.5 text-xs text-primary hover:underline mb-3 w-fit font-semibold">
+                        <MapPin className="w-3.5 h-3.5" /> Directions to {req.hospital}
+                      </a>
                       <div className="border-t border-border pt-3">
                         {isSuccess ? (
-                          <div className="flex items-center gap-2 text-green-700 text-sm font-semibold">
+                          <div className="flex items-center gap-2 text-green-700 text-sm font-bold">
                             <CheckCircle className="w-4 h-4" /> Response sent! They can now see your contact info.
                           </div>
                         ) : responded ? (
-                          <div className="flex items-center gap-2 text-muted-foreground text-sm">
+                          <div className="flex items-center gap-2 text-muted-foreground text-sm font-medium">
                             <CheckCircle className="w-4 h-4 text-green-600" /> You already responded.
                           </div>
                         ) : (
@@ -2069,7 +2500,7 @@ function DashboardScreen({ profile, onLogout }: { profile: Profile; onLogout: ()
                             if (!eligible) { setPendingRespondTarget(req); setShowDonationWarning(true); }
                             else setRespondTarget(req);
                           }}
-                            className="w-full bg-primary text-primary-foreground py-2 rounded-md text-sm font-semibold flex items-center justify-center gap-2 hover:bg-primary/90 transition-colors">
+                            className="w-full bg-primary text-primary-foreground py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 hover:bg-primary/90 active:scale-[0.98] transition-all shadow-sm shadow-primary/20">
                             <Heart className="w-4 h-4" /> I can help — Respond
                           </button>
                         )}
@@ -2271,6 +2702,12 @@ function DashboardScreen({ profile, onLogout }: { profile: Profile; onLogout: ()
                             </button>
                           )}
                         </div>
+                        {parentRequest && (
+                          <a href={mapsDirectionsUrl(parentRequest.hospital, parentRequest.city)} target="_blank" rel="noopener noreferrer"
+                            className="flex items-center gap-1.5 text-xs text-primary hover:underline mb-2 w-fit">
+                            <MapPin className="w-3.5 h-3.5" /> Get Directions to {parentRequest.hospital}
+                          </a>
+                        )}
                         {parentRequest && parentRequest.status !== "fulfilled" && !alreadyFulfilled ? (
                           <button
                             onClick={() => setFulfillTarget({ response: r, requestId: r.requestId })}

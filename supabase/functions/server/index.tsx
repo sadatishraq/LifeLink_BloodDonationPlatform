@@ -67,6 +67,122 @@ app.post("/make-server-fd15274a/auth/register", async (c) => {
   return c.json({ profile });
 });
 
+// ── Email Verification (registration) ────────────────────────────────────
+app.post("/make-server-fd15274a/auth/send-verification", async (c) => {
+  const { email } = await c.req.json();
+  if (!email) return c.json({ error: "Email required" }, 400);
+  const emailKey = `auth:${email.toLowerCase().trim()}`;
+  const existing: any = await kv.get(emailKey);
+  if (existing) return c.json({ error: "An account with this email already exists. Please log in instead." }, 409);
+
+  const code = String(Math.floor(100000 + Math.random() * 900000));
+  const expiresAt = Date.now() + 15 * 60 * 1000;
+  await kv.set(`verify:${email.toLowerCase().trim()}`, { code, expiresAt });
+
+  await sendEmail(email, "LifeLink — Verify Your Email", `
+    <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:24px">
+      <h2 style="color:#bf0e26">Verify Your Email</h2>
+      <p>Welcome to LifeLink! Use the code below to verify your email address and complete registration:</p>
+      <div style="background:#fff0f0;border:1px solid #f5c6cb;border-radius:8px;padding:24px;margin:20px 0;text-align:center">
+        <p style="font-size:36px;font-weight:bold;letter-spacing:8px;color:#bf0e26;margin:0">${code}</p>
+      </div>
+      <p style="color:#555">This code expires in <strong>15 minutes</strong>. If you did not request this, please ignore this email.</p>
+      <p style="color:#888;font-size:13px;margin-top:32px">LifeLink — Every drop saves a life.</p>
+    </div>
+  `);
+  return c.json({ success: true });
+});
+
+app.post("/make-server-fd15274a/auth/verify-email-code", async (c) => {
+  const { email, code } = await c.req.json();
+  if (!email || !code) return c.json({ error: "Email and code required" }, 400);
+  const record: any = await kv.get(`verify:${email.toLowerCase().trim()}`);
+  if (!record) return c.json({ error: "No verification request found. Please request a new code." }, 400);
+  if (Date.now() > record.expiresAt) {
+    await kv.del(`verify:${email.toLowerCase().trim()}`);
+    return c.json({ error: "Code has expired. Please request a new one." }, 400);
+  }
+  if (record.code !== String(code).trim()) return c.json({ error: "Incorrect code. Please check your email." }, 400);
+  return c.json({ success: true });
+});
+
+// ── Forgot / Reset Password ───────────────────────────────────────────────
+app.post("/make-server-fd15274a/auth/forgot-password", async (c) => {
+  const { email } = await c.req.json();
+  if (!email) return c.json({ error: "Email required" }, 400);
+  const emailKey = `auth:${email.toLowerCase().trim()}`;
+  const auth: any = await kv.get(emailKey);
+  if (!auth) return c.json({ error: "No account found with this email address." }, 404);
+
+  const code = String(Math.floor(100000 + Math.random() * 900000));
+  const expiresAt = Date.now() + 15 * 60 * 1000; // 15 minutes
+  await kv.set(`recovery:${email.toLowerCase().trim()}`, { code, expiresAt });
+
+  await sendEmail(email, "LifeLink — Password Reset Code", `
+    <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:24px">
+      <h2 style="color:#c0152a">Password Reset Request</h2>
+      <p>We received a request to reset your LifeLink password. Use the code below:</p>
+      <div style="background:#fff0f0;border:1px solid #f5c6cb;border-radius:8px;padding:24px;margin:20px 0;text-align:center">
+        <p style="font-size:36px;font-weight:bold;letter-spacing:8px;color:#c0152a;margin:0">${code}</p>
+      </div>
+      <p style="color:#555">This code expires in <strong>15 minutes</strong>. If you did not request a password reset, please ignore this email.</p>
+      <p style="color:#888;font-size:13px;margin-top:32px">LifeLink — Every drop saves a life.</p>
+    </div>
+  `);
+  return c.json({ success: true });
+});
+
+app.post("/make-server-fd15274a/auth/verify-recovery-code", async (c) => {
+  const { email, code } = await c.req.json();
+  if (!email || !code) return c.json({ error: "Email and code required" }, 400);
+  const recovery: any = await kv.get(`recovery:${email.toLowerCase().trim()}`);
+  if (!recovery) return c.json({ error: "No reset request found. Please request a new code." }, 400);
+  if (Date.now() > recovery.expiresAt) {
+    await kv.del(`recovery:${email.toLowerCase().trim()}`);
+    return c.json({ error: "Code has expired. Please request a new one." }, 400);
+  }
+  if (recovery.code !== String(code).trim()) return c.json({ error: "Incorrect code. Please check your email and try again." }, 400);
+  return c.json({ success: true });
+});
+
+app.post("/make-server-fd15274a/auth/reset-password", async (c) => {
+  const { email, code, newPassword } = await c.req.json();
+  if (!email || !code || !newPassword) return c.json({ error: "All fields required" }, 400);
+  const recovery: any = await kv.get(`recovery:${email.toLowerCase().trim()}`);
+  if (!recovery) return c.json({ error: "No reset request found. Please request a new code." }, 400);
+  if (Date.now() > recovery.expiresAt) {
+    await kv.del(`recovery:${email.toLowerCase().trim()}`);
+    return c.json({ error: "Code has expired. Please request a new one." }, 400);
+  }
+  if (recovery.code !== code) return c.json({ error: "Incorrect code. Please check your email." }, 400);
+  if (newPassword.length < 6) return c.json({ error: "Password must be at least 6 characters." }, 400);
+
+  const emailKey = `auth:${email.toLowerCase().trim()}`;
+  const auth: any = await kv.get(emailKey);
+  if (!auth) return c.json({ error: "Account not found." }, 404);
+
+  const encoded = btoa(unescape(encodeURIComponent(newPassword)));
+  await kv.set(emailKey, { ...auth, password: encoded });
+  await kv.del(`recovery:${email.toLowerCase().trim()}`);
+  return c.json({ success: true });
+});
+
+// ── Public Stats ──────────────────────────────────────────────────────────
+app.get("/make-server-fd15274a/stats/public", async (c) => {
+  const [profiles, requests] = await Promise.all([
+    kv.getByPrefix("profile:"),
+    kv.getByPrefix("request:"),
+  ]);
+  const validProfiles = profiles.filter((p: any) => p?.id && p?.city);
+  const validRequests = requests.filter((r: any) => r?.id && r?.takerId);
+  const cities = new Set(validProfiles.map((p: any) => p.city?.toLowerCase().trim()).filter(Boolean));
+  return c.json({
+    totalUsers: validProfiles.length,
+    fulfilledRequests: validRequests.filter((r: any) => r.status === "fulfilled").length,
+    cities: cities.size,
+  });
+});
+
 app.get("/make-server-fd15274a/auth/check-email", async (c) => {
   const email = c.req.query("email");
   if (!email) return c.json({ error: "Email required" }, 400);
