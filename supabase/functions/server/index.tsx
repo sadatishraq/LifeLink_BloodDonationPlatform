@@ -17,20 +17,31 @@ app.use("/*", cors({
 app.get("/make-server-fd15274a/health", (c) => c.json({ status: "ok" }));
 
 // ── Email via Resend ──────────────────────────────────────────────────────
-async function sendEmail(to: string, subject: string, html: string) {
+async function sendEmail(to: string, subject: string, html: string): Promise<void> {
   const key = Deno.env.get("RESEND_API_KEY");
-  if (!key) return;
-  // Silently attempt — fails gracefully until a domain is verified at resend.com/domains
-  await fetch("https://api.resend.com/emails", {
+  if (!key) throw new Error("Email service not configured (missing RESEND_API_KEY).");
+  const fromDomain = Deno.env.get("RESEND_FROM_DOMAIN");
+  // onboarding@resend.dev only works for the Resend account owner's email (sandbox restriction).
+  // Set RESEND_FROM_DOMAIN env var (e.g. "lifelink.com") to send to any address.
+  const from = fromDomain
+    ? `LifeLink <noreply@${fromDomain}>`
+    : "LifeLink <onboarding@resend.dev>";
+  const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      from: "LifeLink <onboarding@resend.dev>",
-      to: [to],
-      subject,
-      html,
-    }),
-  }).catch(() => {});
+    body: JSON.stringify({ from, to: [to], subject, html }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    const msg = (err as any).message ?? (err as any).name ?? "Email delivery failed.";
+    // Resend sandbox restriction: "onboarding@resend.dev" only delivers to verified owner email
+    if (msg.includes("verified") || msg.includes("domain") || res.status === 403) {
+      throw new Error(
+        "Email could not be delivered. The email service is in sandbox mode and can only send to the account owner's address. Please contact the administrator to configure a verified sending domain."
+      );
+    }
+    throw new Error(msg);
+  }
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────
@@ -79,17 +90,23 @@ app.post("/make-server-fd15274a/auth/send-verification", async (c) => {
   const expiresAt = Date.now() + 15 * 60 * 1000;
   await kv.set(`verify:${email.toLowerCase().trim()}`, { code, expiresAt });
 
-  await sendEmail(email, "LifeLink — Verify Your Email", `
-    <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:24px">
-      <h2 style="color:#bf0e26">Verify Your Email</h2>
-      <p>Welcome to LifeLink! Use the code below to verify your email address and complete registration:</p>
-      <div style="background:#fff0f0;border:1px solid #f5c6cb;border-radius:8px;padding:24px;margin:20px 0;text-align:center">
-        <p style="font-size:36px;font-weight:bold;letter-spacing:8px;color:#bf0e26;margin:0">${code}</p>
+  try {
+    await sendEmail(email, "LifeLink — Verify Your Email", `
+      <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:24px">
+        <h2 style="color:#bf0e26">Verify Your Email</h2>
+        <p>Welcome to LifeLink! Use the code below to verify your email address and complete registration:</p>
+        <div style="background:#fff0f0;border:1px solid #f5c6cb;border-radius:8px;padding:24px;margin:20px 0;text-align:center">
+          <p style="font-size:36px;font-weight:bold;letter-spacing:8px;color:#bf0e26;margin:0">${code}</p>
+        </div>
+        <p style="color:#555">This code expires in <strong>15 minutes</strong>. If you did not request this, please ignore this email.</p>
+        <p style="color:#888;font-size:13px;margin-top:32px">LifeLink — Every drop saves a life.</p>
       </div>
-      <p style="color:#555">This code expires in <strong>15 minutes</strong>. If you did not request this, please ignore this email.</p>
-      <p style="color:#888;font-size:13px;margin-top:32px">LifeLink — Every drop saves a life.</p>
-    </div>
-  `);
+    `);
+  } catch (e: any) {
+    // Clean up the stored code so the user can retry after fixing the issue
+    await kv.del(`verify:${email.toLowerCase().trim()}`);
+    return c.json({ error: e.message ?? "Failed to send verification email." }, 500);
+  }
   return c.json({ success: true });
 });
 
@@ -118,17 +135,22 @@ app.post("/make-server-fd15274a/auth/forgot-password", async (c) => {
   const expiresAt = Date.now() + 15 * 60 * 1000; // 15 minutes
   await kv.set(`recovery:${email.toLowerCase().trim()}`, { code, expiresAt });
 
-  await sendEmail(email, "LifeLink — Password Reset Code", `
-    <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:24px">
-      <h2 style="color:#c0152a">Password Reset Request</h2>
-      <p>We received a request to reset your LifeLink password. Use the code below:</p>
-      <div style="background:#fff0f0;border:1px solid #f5c6cb;border-radius:8px;padding:24px;margin:20px 0;text-align:center">
-        <p style="font-size:36px;font-weight:bold;letter-spacing:8px;color:#c0152a;margin:0">${code}</p>
+  try {
+    await sendEmail(email, "LifeLink — Password Reset Code", `
+      <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:24px">
+        <h2 style="color:#c0152a">Password Reset Request</h2>
+        <p>We received a request to reset your LifeLink password. Use the code below:</p>
+        <div style="background:#fff0f0;border:1px solid #f5c6cb;border-radius:8px;padding:24px;margin:20px 0;text-align:center">
+          <p style="font-size:36px;font-weight:bold;letter-spacing:8px;color:#c0152a;margin:0">${code}</p>
+        </div>
+        <p style="color:#555">This code expires in <strong>15 minutes</strong>. If you did not request a password reset, please ignore this email.</p>
+        <p style="color:#888;font-size:13px;margin-top:32px">LifeLink — Every drop saves a life.</p>
       </div>
-      <p style="color:#555">This code expires in <strong>15 minutes</strong>. If you did not request a password reset, please ignore this email.</p>
-      <p style="color:#888;font-size:13px;margin-top:32px">LifeLink — Every drop saves a life.</p>
-    </div>
-  `);
+    `);
+  } catch (e: any) {
+    await kv.del(`recovery:${email.toLowerCase().trim()}`);
+    return c.json({ error: e.message ?? "Failed to send reset email." }, 500);
+  }
   return c.json({ success: true });
 });
 
